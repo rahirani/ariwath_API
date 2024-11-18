@@ -1,11 +1,20 @@
 import status
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.crud import verify_otp_for_user
-from app.schemas import OTPVerifyRequest, PasswordResetConfirm, PasswordResetRequest, LoginForm, Token
-from datetime import timedelta
+from app.schemas import OTPVerifyRequest,LoginForm
 from app.auth import authenticate_user, create_access_token
 from app import models, crud, database, schemas, utils, auth
+from fastapi import BackgroundTasks
+from jose import jwt, JWTError
+from datetime import timedelta, datetime
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+from fastapi.responses import JSONResponse
+from app.utils import send_welcome_email
+
+SECRET_KEY = "airawath"  # Replace with a secure, random key
+ALGORITHM = "HS256"
+RESET_TOKEN_EXPIRE_MINUTES = 15  # Token validity
 
 # Create all database tables
 models.Base.metadata.create_all(bind=database.engine)  # Recreates tables with updated structure
@@ -21,9 +30,12 @@ def get_db():
     finally:
         db.close()
 
-# Route for user registration
 @app.post("/register/", response_model=schemas.UserResponse)
-async def register_user(user: schemas.UserCreate, db: Session = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()):
+async def register_user(
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
     # Check if passwords match
     if user.password != user.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
@@ -43,12 +55,30 @@ async def register_user(user: schemas.UserCreate, db: Session = Depends(get_db),
     otp = utils.generate_otp()
     crud.set_otp_for_user(db, new_user, otp)
     try:
-        # await utils.send_otp_email(background_tasks, email=user.email, otp=otp)
-        print(f"Generated OTP for {user.email}: {otp}")  # Remove or secure this in production
+        await utils.send_otp_email(background_tasks, email=user.email, otp=otp)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send OTP: {str(e)}")
 
     return new_user
+
+
+@app.post("/automated-questions/")
+async def automated_questions(
+        user_id: int,
+        questions: schemas.AutomatedQuestions,
+        db: Session = Depends(get_db)
+):
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if not user.otp_verified:
+        raise HTTPException(status_code=400, detail="OTP verification required.")
+
+    updated_user = crud.save_automated_questions(db, user_id, questions)
+    if not updated_user:
+        raise HTTPException(status_code=400, detail="Failed to save responses.")
+    return {"message": "Automated questions saved successfully. Proceed to profile building."}
+
 
 # Route for updating user profile
 @app.put("/update-profile/", response_model=schemas.UserResponse)
@@ -57,22 +87,6 @@ async def update_profile(request: schemas.UserProfileUpdate, db: Session = Depen
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
     return updated_user
-
-
-@app.post("/token", response_model=schemas.Token)
-async def login_for_access_token(form_data: schemas.LoginForm, db: Session = Depends(database.get_db)):
-    user = auth.authenticate_user(db, form_data.email, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = auth.create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/verify-otp/")
 async def verify_otp(request: OTPVerifyRequest, db: Session = Depends(get_db)):
@@ -86,11 +100,6 @@ async def verify_otp(request: OTPVerifyRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     return {"message": "OTP verified successfully"}
-
-
-# Define token expiration time
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-from fastapi.responses import JSONResponse
 
 @app.post("/login", response_model=schemas.Token)
 async def login_for_access_token(request: LoginForm, db: Session = Depends(get_db)):
@@ -111,11 +120,17 @@ async def login_for_access_token(request: LoginForm, db: Session = Depends(get_d
     # Authenticate the user
     user = authenticate_user(db, email=request.email, password=request.password)
     if not user:
-        # General error for invalid credentials as specified
         raise HTTPException(
             status_code=400,
             detail="Invalid credentials, please try again.",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Check if OTP is verified
+    if not user.otp_verified:
+        raise HTTPException(
+            status_code=400,
+            detail="OTP verification required. Please verify your OTP to log in.",
         )
 
     # Generate access token upon successful authentication
@@ -124,7 +139,7 @@ async def login_for_access_token(request: LoginForm, db: Session = Depends(get_d
         data={"sub": user.email}, expires_delta=access_token_expires
     )
 
-    # Return a message indicating successful login, and token to allow frontend session management
+    # Return a success message with the access token
     return JSONResponse(
         content={
             "message": "Login successful. Redirecting to dashboard...",
@@ -132,76 +147,6 @@ async def login_for_access_token(request: LoginForm, db: Session = Depends(get_d
             "token_type": "bearer"
         }
     )
-# @app.post("/login", response_model=Token)
-# async def login_for_access_token(request: LoginForm, db: Session = Depends(get_db)):
-#     # Authenticate the user
-#     user = authenticate_user(db, email=request.email, password=request.password)
-#     if not user:
-#         raise HTTPException(
-#             status_code=400,
-#             detail="Incorrect email or password",
-#             headers={"WWW-Authenticate": "Bearer"},
-#         )
-#
-#     # Generate the access token
-#     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-#     access_token = create_access_token(
-#         data={"sub": user.email}, expires_delta=access_token_expires
-#     )
-#     return {"access_token": access_token, "token_type": "bearer"}
-
-# @app.post("/reset-password-request/")
-# async def reset_password_request(request: PasswordResetRequest, db: Session = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()):
-#     # Fetch the user by email
-#     user = crud.get_user_by_email(db, email=request.email)
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-#
-#     # Generate an OTP for password reset
-#     otp = utils.generate_otp()
-#     crud.set_otp_for_user(db, user, otp)
-#
-#     # Send OTP via email
-#     try:
-#         # await utils.send_otp_email(background_tasks, email=user.email, otp=otp)
-#         print(f"Password reset OTP for {user.email}: {otp}")  # Secure or remove in production
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to send OTP: {str(e)}")
-#
-#     return {"message": "Password reset OTP sent successfully"}
-#
-# @app.post("/reset-password-confirm/")
-# async def reset_password_confirm(request: PasswordResetConfirm, db: Session = Depends(get_db)):
-#     # Fetch the user by email
-#     user = crud.get_user_by_email(db, email=request.email)
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-#
-#     # Check if the OTP is valid
-#     if not verify_otp_for_user(db, user, request.otp):
-#         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-#
-#     # Check if passwords match
-#     if request.new_password != request.confirm_password:
-#         raise HTTPException(status_code=400, detail="Passwords do not match")
-#
-#     # Hash the new password and update the user
-#     hashed_password = utils.hash_password(request.new_password)
-#     user.hashed_password = hashed_password
-#     user.otp = None  # Clear OTP after successful reset
-#     user.otp_expiration = None
-#     db.commit()
-#     db.refresh(user)
-#
-#     return {"message": "Password reset successfully"}
-
-from fastapi import BackgroundTasks
-from jose import jwt, JWTError
-from datetime import timedelta, datetime
-
-SECRET_KEY = "your_secret_key"  # Replace with a secure, random key
-ALGORITHM = "HS256"
-RESET_TOKEN_EXPIRE_MINUTES = 15  # Token validity
 
 
 # Function to generate password reset token
@@ -209,7 +154,6 @@ def create_reset_token(email: str):
     expire = datetime.utcnow() + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub": email, "exp": expire}
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
 
 # Request Password Reset Endpoint
 @app.post("/request-password-reset/")
@@ -226,7 +170,7 @@ async def request_password_reset(request: schemas.PasswordResetRequest, db: Sess
 
     # Send reset link via email
     try:
-        # await utils.send_reset_email(background_tasks, email=user.email, link=reset_link)
+        await utils.send_reset_email(background_tasks, email=user.email, link=reset_link)
         print("token: ",token)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send reset link: {str(e)}")
@@ -240,7 +184,6 @@ async def confirm_password_reset(request: schemas.PasswordResetConfirm, db: Sess
     # Verify if passwords match
     if request.new_password != request.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match.")
-
 
     # Decode the token
     try:
@@ -263,3 +206,25 @@ async def confirm_password_reset(request: schemas.PasswordResetConfirm, db: Sess
     db.refresh(user)
 
     return {"message": "Your password has been reset successfully. Please log in with your new password."}
+
+@app.post("/finalize-registration/")
+async def finalize_registration(user_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    print(f"[DEBUG] Finalizing registration for user_id: {user_id}")
+    user = crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if not user.otp_verified:
+        raise HTTPException(status_code=400, detail="OTP verification required.")
+    if user.registration_complete:
+        return {"message": "Registration already completed."}
+
+    # Finalize registration
+    updated_user = crud.finalize_registration(db, user_id)
+    if not updated_user:
+        raise HTTPException(status_code=400, detail="Failed to finalize registration.")
+
+    # Send welcome email
+    await send_welcome_email(background_tasks, email=user.email, username=user.username)
+
+    return {"message": "Thank you for registering! Welcome to Airawat!"}
+

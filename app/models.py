@@ -1,45 +1,40 @@
 from sqlalchemy import DateTime
 from sqlalchemy import Column, Integer, String, Boolean, Date, Text, Enum, Float, ForeignKey
-from app.database import Base
+from app.database import Base, engine
 import enum
 
-class PronounsEnum(enum.Enum):
-    he = "he"
-    she = "she"
-    they = "they"
-
 class User(Base):
-    __tablename__ = 'users'
+    __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(20), unique=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, nullable=False)
+    phone_number = Column(String, unique=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    phone_number = Column(String(10), unique=True, nullable=False)
-    otp_verified = Column(Boolean, default=False)
     otp = Column(String, nullable=True)  # Stores the OTP code
     otp_expiration = Column(DateTime, nullable=True)  # Stores OTP expiration time
+    is_active = Column(Boolean, default=True)
+    otp_verified = Column(Boolean, default=False)
 
+    # Automated questions
+    hobbies = Column(String, nullable=True)
+    luxury_item = Column(String, nullable=True)
+    preference = Column(String, nullable=True)
+    tech_minimalist = Column(String, nullable=True)
+    indoors_outdoors = Column(String, nullable=True)
+    crayon_color = Column(String, nullable=True)
+
+    # Profile fields
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     middle_name = Column(String, nullable=True)
     age = Column(Integer, nullable=True)
     location = Column(String, nullable=True)
     dob = Column(Date, nullable=True)
-    pronouns = Column(Enum(PronounsEnum), nullable=True)
+    pronouns = Column(String, nullable=True)  # Options: "he", "she", "they"
 
-    # Level 1 profile information
-    income = Column(String, nullable=True)
-    education_level = Column(String, nullable=True)
-    personal_income = Column(Float, nullable=True)
+    registration_complete = Column(Boolean, default=False)  # registration_complete
 
-    # Level 2 additional information
-    hobby = Column(String, nullable=True)
-    favorite_team = Column(String, nullable=True)  # Conditional input based on hobby
-    social_media_profiles = Column(Text, nullable=True)  # JSON or string for simplicity
-
-    is_active = Column(Boolean, default=True)
-
-    def __repr__(self):
-        return f"<User(username={self.username}, email={self.email})>"
+# Create tables
+Base.metadata.create_all(bind=engine)
 

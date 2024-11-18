@@ -4,11 +4,12 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app import crud, utils, database
+from app.crud import get_user_by_email
+from app.utils import verify_password
 
-# Secret key for JWT
-SECRET_KEY = "airawath"  # Replace with a secure key or use environment variables
+SECRET_KEY = "airawath"  # Replace with a secure, random key
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+RESET_TOKEN_EXPIRE_MINUTES = 15  # Token validity
 
 # Dependency to get the database session
 def get_db():
@@ -18,14 +19,11 @@ def get_db():
     finally:
         db.close()
 
-# Function to create an access token
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Generate a JWT access token."""
+def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 # Function to verify an access token and get the current user
 def get_current_user(db: Session = Depends(get_db), token: str = Depends(utils.oauth2_scheme)):
@@ -48,12 +46,8 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(utils.o
         raise credentials_exception
     return user
 
-# Function for user login and token generation
 def authenticate_user(db: Session, email: str, password: str):
-    """Authenticate user by email and password."""
-    user = crud.get_user_by_email(db, email=email)
-    if not user:
-        return False
-    if not utils.verify_password(password, user.hashed_password):
-        return False
+    user = get_user_by_email(db, email)
+    if not user or not verify_password(password, user.hashed_password):
+        return None
     return user

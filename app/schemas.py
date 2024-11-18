@@ -5,13 +5,9 @@ from datetime import date
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=20)
     email: EmailStr
+    phone_number: str = Field(..., pattern=r"^\d{10}$")
     password: str = Field(..., min_length=8)
     confirm_password: str
-    phone_number: str = Field(..., pattern="^\d{10}$")
-
-    class Config:
-        from_attributes = True
-        orm_mode = True
 
 class UserProfile(BaseModel):
     first_name: Optional[str]
@@ -28,13 +24,11 @@ class UserProfile(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
-    username: str
-    email: EmailStr
+    email: str
     phone_number: str
-    is_active: bool
 
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class LoginForm(BaseModel):
     email: str
@@ -43,19 +37,23 @@ class LoginForm(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 class OTPVerifyRequest(BaseModel):
     user_id: int
     otp: str
 
 class UserProfileUpdate(BaseModel):
     user_id: int
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    first_name: Optional[str]
+    last_name: Optional[str]
     middle_name: Optional[str] = None
-    age: Optional[int] = None
-    location: Optional[str] = None
-    dob: Optional[date] = None
-    pronouns: Optional[str] = None
+    age: Optional[int]
+    location: Optional[str]
+    dob: Optional[date]
+    pronouns: Optional[str]  # Options: "he", "she", "they"
+
+    class Config:
+        orm_mode = True
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
@@ -84,3 +82,12 @@ class PasswordResetConfirm(BaseModel):
         if "new_password" in values and v != values["new_password"]:
             raise ValueError("Passwords do not match.")
         return v
+
+class AutomatedQuestions(BaseModel):
+    hobbies: str = Field(..., description="What do you enjoy doing in your free time?")
+    luxury_item: str = Field(..., description="If you could treat yourself to one luxury item, what would it be?")
+    preference: str = Field(..., description="Are you more into experiences or physical gifts?")
+    tech_minimalist: str = Field(..., description="Do you like tech gadgets or are you more of a minimalist?")
+    indoors_outdoors: str = Field(..., description="Do you prefer spending time indoors or outdoors?")
+    crayon_color: str = Field(..., description="If you were a crayon, what color would you be and why?")
+
