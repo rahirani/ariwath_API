@@ -14,7 +14,7 @@ from app.utils import send_welcome_email
 
 SECRET_KEY = "airawath"  # Replace with a secure, random key
 ALGORITHM = "HS256"
-RESET_TOKEN_EXPIRE_MINUTES = 15  # Token validity
+RESET_TOKEN_EXPIRE_MINUTES = 30  # Token validity
 
 # Create all database tables
 models.Base.metadata.create_all(bind=database.engine)  # Recreates tables with updated structure
@@ -148,7 +148,6 @@ async def login_for_access_token(request: LoginForm, db: Session = Depends(get_d
         }
     )
 
-
 # Function to generate password reset token
 def create_reset_token(email: str):
     expire = datetime.utcnow() + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
@@ -226,5 +225,5 @@ async def finalize_registration(user_id: int, background_tasks: BackgroundTasks,
     # Send welcome email
     await send_welcome_email(background_tasks, email=user.email, username=user.username)
 
-    return {"message": "Thank you for registering! Welcome to Airawat!"}
+    return {"message": "Thank you for registering! Welcome to Airawath!"}
 
